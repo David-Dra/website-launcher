@@ -1,0 +1,9 @@
+[Unit]
+Description=Website: deploy the newest commit of the branch, if there is one
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/site/site.env
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/site update

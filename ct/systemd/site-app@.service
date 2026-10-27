@@ -1,0 +1,20 @@
+[Unit]
+Description=Website app (Node) on port %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=site
+Group=site
+WorkingDirectory=/srv/site/slot-%i
+Environment=PATH=/var/lib/site/home/bin:/usr/local/bin:/usr/bin:/bin HOME=/var/lib/site/home NODE_ENV=production
+Environment=SITE_DATA=/srv/site/data
+EnvironmentFile=-/etc/site/secrets.env
+EnvironmentFile=/etc/site/app-%i.env
+ExecStart=/bin/bash -c 'eval "exec $$SITE_START"'
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

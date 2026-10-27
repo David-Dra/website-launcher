@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare tunnel for this website (token in /etc/site/cloudflared.env, set with: site tunnel)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/site/cloudflared.env
+
+[Service]
+EnvironmentFile=/etc/site/cloudflared.env
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+Restart=on-failure
+RestartSec=5
+User=nobody
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

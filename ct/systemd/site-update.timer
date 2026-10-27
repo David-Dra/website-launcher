@@ -1,0 +1,10 @@
+[Unit]
+Description=Website: look for new commits (interval: site up --poll, drop-in site-update.timer.d/interval.conf)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+RandomizedDelaySec=15s
+
+[Install]
+WantedBy=timers.target

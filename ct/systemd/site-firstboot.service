@@ -1,0 +1,13 @@
+[Unit]
+Description=Website: first deploy from a pushed /etc/site/site.env (pct push <ctid> site.env /etc/site/site.env)
+After=network-online.target caddy.service
+Wants=network-online.target
+ConditionPathExists=/etc/site/site.env
+ConditionPathExists=!/var/lib/site/live.env
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/site firstboot
+
+[Install]
+WantedBy=multi-user.target
