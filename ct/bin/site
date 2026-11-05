@@ -256,11 +256,22 @@ prune() {  # keep the newest $KEEP releases plus the live one
 
 # --- commands --------------------------------------------------------------------------------------------------------
 cmd_update() {
-  local force=no
-  [[ "${1:-}" == --force ]] && force=yes
+  local force=no wait=no
+  while (( $# )); do
+    case $1 in
+      --force) force=yes ;;
+      --wait) wait=yes ;;  # wait for a deploy that is running (site up), instead of skipping
+      *) die "usage: site update [--force]" ;;
+    esac
+    shift
+  done
   [[ -n "${SITE_REPO:-}" ]] || die "no site yet: site up <repo-url>"
   exec 9>/run/site.lock
-  flock -n 9 || { echo "a deploy is already running"; return 0; }
+  if [[ $wait == yes ]]; then
+    flock -n 9 || { echo "a deploy is running, waiting for it to finish"; flock -w 1800 9 || die "it did not finish within 30 min"; }
+  else
+    flock -n 9 || { echo "a deploy is already running"; return 0; }
+  fi
 
   COMMIT=$(git ls-remote "$SITE_REPO" "refs/heads/$SITE_BRANCH" 2>>"$LOG" | cut -f1)
   if [[ -z "$COMMIT" ]]; then
@@ -337,25 +348,31 @@ SITE_LAN=$lan
 EOF
   chmod 600 "$ETC/site.env"
   . "$ETC/site.env"
-  if [[ $poll == off ]]; then
-    systemctl disable --now site-update.timer >/dev/null 2>&1 || true
-  else
+  # The timer starts only after the first deploy: enabled earlier, it fires at once (OnBootSec has long passed) and
+  # its own `site update` takes the deploy lock from this one
+  systemctl disable --now site-update.timer >/dev/null 2>&1 || true
+  if [[ $poll != off ]]; then
     mkdir -p /etc/systemd/system/site-update.timer.d
-    printf '[Timer]\nOnUnitActiveSec=\nOnUnitActiveSec=%s\n' "$poll"  # empty line first: replace the default, not add to it >/etc/systemd/system/site-update.timer.d/interval.conf
+    # the empty OnUnitActiveSec= first replaces the unit's default instead of adding a second interval
+    printf '[Timer]\nOnUnitActiveSec=\nOnUnitActiveSec=%s\n' "$poll" >/etc/systemd/system/site-update.timer.d/interval.conf
     systemctl daemon-reload
-    systemctl enable --now site-update.timer >/dev/null 2>&1
   fi
   [[ -n "${LIVE_TYPE:-}" ]] || caddy_write none
-  LAST_COMMIT="" cmd_update --force || { cmd_status; exit 1; }
+  local rc=0
+  LAST_COMMIT="" cmd_update --force --wait || rc=$?
+  exec 9>&-  # release the deploy lock before the timer can run
+  if [[ $poll != off ]]; then systemctl enable --now site-update.timer >/dev/null 2>&1; fi
   cmd_status
+  return "$rc"
 }
 
 cmd_status() {
   load "$STATE/live.env"; load "$STATE/status.env"
+  local live=${LIVE_COMMIT:-} last=${LAST_COMMIT:-}  # set -u: ${UNSET:0:7} is an error, not empty
   echo "repo:     ${SITE_REPO:-none} (${SITE_BRANCH:-})${SITE_SUBDIR:+ subdir $SITE_SUBDIR}"
   echo "url:      ${SITE_HOST:+https://$SITE_HOST}  (tunnel: $(systemctl is-active cloudflared-site 2>/dev/null || true))"
-  echo "live:     ${LIVE_COMMIT:0:7} ${LIVE_TYPE:-nothing}${LIVE_KIND:+/$LIVE_KIND} ${LIVE_PORT:+port $LIVE_PORT} ${LIVE_RELEASE:-}"
-  echo "last:     ${LAST_RESULT:-never} ${LAST_COMMIT:0:7} ${LAST_AT:-} — ${LAST_MESSAGE:-}"
+  echo "live:     ${live:0:7}${LIVE_TYPE:-nothing}${LIVE_KIND:+/$LIVE_KIND} ${LIVE_PORT:+port $LIVE_PORT} ${LIVE_RELEASE:-}"
+  echo "last:     ${LAST_RESULT:-never} ${last:0:7}${LAST_AT:-} — ${LAST_MESSAGE:-}"
   echo "updates:  every ${SITE_POLL:-?} ($(systemctl is-active site-update.timer 2>/dev/null || true))"
   echo "releases: $(ls -1 "$SRV/releases" 2>/dev/null | tr '\n' ' ')"
 }

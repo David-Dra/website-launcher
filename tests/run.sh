@@ -182,6 +182,35 @@ ok "firewall: CT not made by pve-site.sh refused" "$code $([[ -e "$T/fw/104.fw" 
 ok "sites.env.example: required keys are empty" \
   "$(grep -E '^(DOMAIN|TEMPLATE|DNS_IP|LAN|CF_API_TOKEN|CF_ACCOUNT_ID|CF_ZONE_ID)=' "$HERE/../sites.env.example" | grep -cv '=$')" "0"
 
+# --- ct/bin/site: single functions, pulled out of the script and run against fakes (the script itself needs root) ---
+SITE_BIN="$HERE/../ct/bin/site"
+fn() { sed -n "/^$1() {/,/^}/p" "$SITE_BIN" | sed "s:/etc/systemd/system:$T/units:g"; }
+mkdir -p "$T/units" "$T/state"
+cat >"$T/site-fns.sh" <<EOF
+set -euo pipefail
+STATE=$T/state ETC=$T/state SRV=$T/srv
+load() { if [[ -f "\$1" ]]; then . "\$1"; fi; }
+die() { echo "site: \$*" >&2; exit 1; }
+systemctl() { echo "systemctl \$*" >>"$T/calls"; [[ "\$*" == "is-active"* ]] && echo inactive; return 0; }
+caddy_write() { :; }
+# the first deploy: was the auto-update timer already on (it would race this deploy for the lock)?
+cmd_update() { echo "cmd_update \$*" >>"$T/calls"; grep -q 'enable --now site-update.timer' "$T/calls" && echo "update: timer already on" >>"$T/calls"; return 0; }
+$(fn cmd_status)
+$(fn cmd_up)
+EOF
+out=$(bash -c ". '$T/site-fns.sh'; cmd_status" 2>&1); code=$?
+ok "site status before any deploy (set -u)" "$code $(grep -c unbound <<<"$out")" "0 0"
+
+: >"$T/calls"
+out=$(bash -c ". '$T/site-fns.sh'; cmd_up https://github.com/a/b --branch master --poll 5min" 2>&1); code=$?
+ok "site up: exit code" "$code" "0"
+ok "site up: deploy waits for a running deploy" "$(grep '^cmd_update' "$T/calls")" "cmd_update --force --wait"
+ok "site up: timer only enabled after the first deploy" "$(grep -c 'timer already on' "$T/calls")" "0"
+ok "site up: timer enabled" "$(grep -c 'enable --now site-update.timer' "$T/calls")" "1"
+ok "site up: poll interval written to the drop-in, not printed" \
+  "$(cat "$T/units/site-update.timer.d/interval.conf" 2>&1 | tr '\n' ' ')|$(grep -c OnUnitActiveSec <<<"$out")" \
+  "[Timer] OnUnitActiveSec= OnUnitActiveSec=5min |0"
+
 # --- syntax of everything that only runs in the container ---
 for f in "$HERE/../ct/bin/site" "$HERE/../ct/build-template.sh" "$PVE_SITE"; do
   ok "bash -n $(basename "$f")" "$(bash -n "$f" 2>&1)" ""
