@@ -39,12 +39,30 @@ CF_API_TOKEN=${CF_API_TOKEN:-} CF_ACCOUNT_ID=${CF_ACCOUNT_ID:-} CF_ZONE_ID=${CF_
 DOMAIN=${DOMAIN:-} TEMPLATE=${TEMPLATE:-} DNS_IP=${DNS_IP:-} LAN=${LAN:-} HUB_URL=${HUB_URL:-} TAILNET=${TAILNET:-100.64.0.0/10}
 HUB_IP="" HUB_PORT=""
 
-need_conf() {  # the site values every command needs; nothing touches a CT before they are there
-  local k
+ipv4() {  # ipv4 <value>: true for a.b.c.d with every part 0-255
+  local o
+  [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  for o in ${1//./ }; do (( 10#$o <= 255 )) || return 1; done
+}
+cidr() { [[ "$1" == */* ]] && ipv4 "${1%/*}" && [[ "${1#*/}" =~ ^[0-9]{1,2}$ ]] && (( 10#${1#*/} <= 32 )); }
+
+# The site values every command needs, checked before anything touches a CT: they end up in firewall rules, and
+# pve-firewall skips a rule it cannot parse (a quoted or mistyped LAN would leave the LAN open, silently).
+need_conf() {
+  local k v
+  for k in DOMAIN TEMPLATE DNS_IP LAN TAILNET HUB_URL; do  # LAN="…" / LAN='…' as people write in env files
+    v=${!k}; v=${v#[\"\']}; v=${v%[\"\']}; printf -v "$k" '%s' "$v"
+  done
   for k in DOMAIN TEMPLATE DNS_IP LAN; do [[ -n "${!k}" ]] || die "$k missing in $CONF (see sites.env.example)"; done
+  ipv4 "$DNS_IP" || die "DNS_IP must be one IPv4 address (got '$DNS_IP')"
+  cidr "$LAN" || die "LAN must be an IPv4 range like 192.168.1.0/24 (got '$LAN')"
+  cidr "$TAILNET" || die "TAILNET must be an IPv4 range like 100.64.0.0/10 (got '$TAILNET')"
+  [[ "$TEMPLATE" =~ ^[0-9]{3,4}$ ]] || die "TEMPLATE must be a CT id (got '$TEMPLATE')"
+  [[ "$DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$ ]] || die "DOMAIN must look like example.org (got '$DOMAIN')"
   if [[ -n "$HUB_URL" ]]; then
-    [[ "$HUB_URL" =~ ^http://([0-9]{1,3}(\.[0-9]{1,3}){3}):([0-9]{1,5})/?$ ]] || die "HUB_URL must look like http://192.168.1.20:8090"
-    HUB_IP=${BASH_REMATCH[1]} HUB_PORT=${BASH_REMATCH[3]}
+    [[ "$HUB_URL" =~ ^http://([0-9.]+):([0-9]{1,5})/?$ ]] || die "HUB_URL must look like http://192.168.1.20:8090 (got '$HUB_URL')"
+    HUB_IP=${BASH_REMATCH[1]} HUB_PORT=${BASH_REMATCH[2]}
+    ipv4 "$HUB_IP" && (( 10#$HUB_PORT >= 1 && 10#$HUB_PORT <= 65535 )) || die "HUB_URL must look like http://192.168.1.20:8090 (got '$HUB_URL')"
   fi
 }
 
@@ -114,7 +132,7 @@ valid_allow() {  # a.b.c.d:port, one IPv4 address and one TCP port, nothing wide
 # firewall <ctid> [--lan] [--allow-out ip:port]...: drop all inbound (LAN :80 with --lan), no LAN egress except
 # the DNS server, the hub and each --allow-out target. Allow-out rules already in the CT's file are kept.
 firewall() {
-  local ctid=$1 lan="" net allow=() a; shift
+  local ctid=$1 lan="" net conf allow=() a; shift
   while (( $# )); do
     case $1 in
       --lan) lan=--lan; shift ;;
@@ -122,6 +140,11 @@ firewall() {
       *) die "firewall: unknown option $1" ;;
     esac
   done
+  # Only site CTs: a typo must not replace the rules of some other CT (and cut it off)
+  conf=$($PCT config "$ctid" 2>/dev/null) || die "CT $ctid not found"
+  grep -q '^description:.*pve-site\.sh' <<<"$conf" || die "CT $ctid was not made by pve-site.sh; not touching its firewall"
+  net=$(sed -n 's/^net0: //p' <<<"$conf")
+  [[ -n "$net" ]] || die "CT $ctid has no net0"
   if [[ -f "$FWDIR/$ctid.fw" ]]; then
     while read -r a; do allow+=("$a"); done < <(sed -n 's/^OUT ACCEPT -dest \([0-9.]*\) -p tcp -dport \([0-9]*\) # allow-out.*/\1:\2/p' "$FWDIR/$ctid.fw")
   fi
@@ -147,8 +170,6 @@ $([[ -n "$HUB_IP" ]] && echo "OUT ACCEPT -dest $HUB_IP -p tcp -dport $HUB_PORT #
 ${rules}OUT DROP -dest $LAN # nothing else on the LAN
 OUT DROP -dest $TAILNET # nor the tailnet (Tailscale range)
 EOF
-  net=$($PCT config "$ctid" | sed -n 's/^net0: //p')
-  [[ -n "$net" ]] || die "CT $ctid has no net0"
   if [[ "$net" != *firewall=1* ]]; then
     net=$(sed -E 's/,?firewall=0//' <<<"$net")
     $PCT set "$ctid" --net0 "$net,firewall=1"

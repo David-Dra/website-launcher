@@ -69,7 +69,8 @@ echo "pct $*" >>"$FAKE_LOG"
 case $1 in
   status) [[ -f "$FAKE_DIR/ct-$2" ]] && echo "status: running" || exit 2 ;;
   clone) touch "$FAKE_DIR/ct-$3" ;;
-  config) echo "net0: name=eth0,bridge=vmbr0,hwaddr=BC:24:11:00:00:01,ip=dhcp,type=veth"; echo "description: Website (pve-site.sh)"; echo "hostname: site-game" ;;
+  config) echo "net0: name=eth0,bridge=vmbr0,hwaddr=BC:24:11:00:00:01,ip=dhcp,type=veth"
+          if [[ $2 == 104 ]]; then echo "description: hand-made CT"; echo "hostname: hub"; else echo "description: Website (pve-site.sh)"; echo "hostname: site-game"; fi ;;
   exec) shift 3; echo "  stdin: $(cat)" >>"$FAKE_LOG" ;;
 esac
 exit 0
@@ -162,6 +163,19 @@ env PATH="$F:$PATH" PVE_SITE_TEST=1 FWDIR="$T/fw" "${CONF_ENV[@]}" HUB_URL= bash
 ok "conf: no hub rule without HUB_URL" "$(grep -c 'dport 8090' "$T/fw/130.fw") $(grep -c 'allow-out' "$T/fw/130.fw")" "0 1"
 out=$(env PATH="$F:$PATH" PVE_SITE_TEST=1 FWDIR="$T/fw" "${CONF_ENV[@]}" HUB_URL=https://hub.lan bash "$PVE_SITE" firewall 130 2>&1); code=$?
 ok "conf: HUB_URL must be http://ip:port" "$code" "1"
+fwrun() { env PATH="$F:$PATH" PVE_SITE_TEST=1 FWDIR="$T/fw" "${CONF_ENV[@]}" "$@" bash "$PVE_SITE" firewall 130 2>&1; }
+cp "$T/fw/130.fw" "$T/fw-before"
+for bad in DNS_IP=nas.lan DNS_IP=192.0.2.300 LAN=192.0.2.0 LAN=192.0.2.0/33 'LAN=192.0.2.0/24 # home' TAILNET=tailnet HUB_URL=http://192.0.2.999:8090; do
+  out=$(fwrun "$bad"); code=$?
+  ok "conf: '$bad' refused" "$code" "1"
+done
+ok "conf: refusals left the firewall file alone" "$(cmp -s "$T/fw-before" "$T/fw/130.fw" && echo same)" "same"
+fwrun 'LAN="192.0.2.0/24"' "DNS_IP='192.0.2.27'" >/dev/null
+ok "conf: quotes around values are stripped" "$(grep -cE '^OUT (DROP -dest 192\.0\.2\.0/24|ACCEPT -dest 192\.0\.2\.27 )' "$T/fw/130.fw") $(grep -c '"' "$T/fw/130.fw")" "3 0"
+
+# --- firewall only rewrites CTs that pve-site.sh made ---
+out=$(run_pve firewall 104 2>&1); code=$?
+ok "firewall: CT not made by pve-site.sh refused" "$code $([[ -e "$T/fw/104.fw" ]] && echo written || echo untouched)" "1 untouched"
 
 # --- syntax of everything that only runs in the container ---
 for f in "$HERE/../ct/bin/site" "$HERE/../ct/build-template.sh" "$PVE_SITE"; do
