@@ -71,7 +71,8 @@ case $1 in
   clone) touch "$FAKE_DIR/ct-$3" ;;
   config) echo "net0: name=eth0,bridge=vmbr0,hwaddr=BC:24:11:00:00:01,ip=dhcp,type=veth"
           if [[ $2 == 104 ]]; then echo "description: hand-made CT"; echo "hostname: hub"; else echo "description: Website (pve-site.sh)"; echo "hostname: site-game"; fi ;;
-  exec) shift 3; echo "  stdin: $(cat)" >>"$FAKE_LOG" ;;
+  # Like real `pct exec`: PATH inside is /sbin:/bin:/usr/sbin:/usr/bin, so a bare `site` (/usr/local/sbin) is not found
+  exec) shift 3; [[ $1 == site ]] && { echo "lxc-attach: Failed to exec \"site\"" >&2; exit 1; }; echo "  stdin: $(cat)" >>"$FAKE_LOG" ;;
 esac
 exit 0
 EOF
@@ -115,11 +116,11 @@ log=$(cat "$T/log")
 ok "clone from template 111" "$(grep -c '^pct clone 111 130 --hostname site-game --full' <<<"$log")" "1"
 ok "memory, onboot, DNS server, nesting" "$(grep -c '^pct set 130 --memory 512 --swap 512 --onboot 1 --nameserver 192.0.2.27 --features nesting=1,keyctl=1' <<<"$log")" "1"
 ok "firewall switched on at net0" "$(grep '^pct set 130 --net0' <<<"$log")" "pct set 130 --net0 name=eth0,bridge=vmbr0,hwaddr=BC:24:11:00:00:01,ip=dhcp,type=veth,firewall=1"
-ok "site up with host" "$(grep -c '^pct exec 130 -- site up https://github.com/u/game --branch main --host game.example.org' <<<"$log")" "1"
+ok "site up with host" "$(grep -c '^pct exec 130 -- /usr/local/sbin/site up https://github.com/u/game --branch main --host game.example.org' <<<"$log")" "1"
 ok "tunnel config points at local Caddy" "$(grep -c '"hostname":"game.example.org","service":"http://127.0.0.1:80"' <<<"$log")" "1"
 ok "proxied CNAME to the tunnel" "$(grep -c '"content":"tid-1.cfargotunnel.com","proxied":true' <<<"$log")" "1"
 ok "tunnel token goes into the CT on stdin" "$(grep -c '^  stdin: eyJhIjoiYWNjIiwidCI6InRpZC0xIiwicyI6InNlY3JldCJ9AAAAAAAAAAAA$' <<<"$log")" "1"
-ok "GitHub + hub token on stdin" "$(grep -A1 -E '^pct exec 130 -- site (github-token|hub)' <<<"$log" | grep -c stdin)" "2"
+ok "GitHub + hub token on stdin" "$(grep -A1 -E '^pct exec 130 -- /usr/local/sbin/site (github-token|hub)' <<<"$log" | grep -c stdin)" "2"
 ok "API token only in header files, never in argv" "$(grep -v 'header-file' <<<"$log" | grep -c 'cf-secret-123')" "0"
 ok "API token was sent" "$(grep -c 'header-file: Authorization: Bearer cf-secret-123' <<<"$log")" "7"
 ok "no secret in any pct argv" "$(grep '^pct' <<<"$log" | grep -cE 'github_pat|hub-secret|eyJ')" "0"

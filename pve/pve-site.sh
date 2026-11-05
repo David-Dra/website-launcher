@@ -24,6 +24,7 @@ set -euo pipefail
 CONF=${SITES_CONF:-/root/.config/pve-sites.env}
 CF=https://api.cloudflare.com/client/v4
 PCT=${PCT:-pct}
+SITE=/usr/local/sbin/site   # full path: `pct exec` runs with PATH=/sbin:/bin:/usr/sbin:/usr/bin
 FWDIR=${FWDIR:-/etc/pve/firewall}
 
 die() { echo "pve-site: $*" >&2; exit 1; }
@@ -106,7 +107,7 @@ publish() {  # publish <ctid> <name>: tunnel site-<name> -> http://127.0.0.1:80,
   local body="{\"type\":\"CNAME\",\"name\":\"$host\",\"content\":\"$id.cfargotunnel.com\",\"proxied\":true,\"comment\":\"pve-site ct$ctid\"}"
   if [[ -n "$rec" ]]; then cf PUT "/zones/$CF_ZONE_ID/dns_records/$rec" "$body" >/dev/null; else cf POST "/zones/$CF_ZONE_ID/dns_records" "$body" >/dev/null; fi
   echo "DNS $host -> tunnel"
-  cf GET "/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$id/token" | json '$j->[0]' | $PCT exec "$ctid" -- site tunnel
+  cf GET "/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$id/token" | json '$j->[0]' | $PCT exec "$ctid" -- "$SITE" tunnel
 }
 
 unpublish() {
@@ -212,12 +213,12 @@ cmd_new() {
   firewall "$ctid" "${fw[@]}"
   $PCT start "$ctid"
   wait_online "$ctid"
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then printf '%s\n' "$GITHUB_TOKEN" | $PCT exec "$ctid" -- site github-token; fi
-  if [[ -n "${HUB_TOKEN:-}" && -n "$HUB_URL" ]]; then printf '%s\n' "$HUB_TOKEN" | $PCT exec "$ctid" -- site hub "$HUB_URL"; fi
-  up=(site up "$repo" --branch "$branch" --host "$name.$DOMAIN")
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then printf '%s\n' "$GITHUB_TOKEN" | $PCT exec "$ctid" -- "$SITE" github-token; fi
+  if [[ -n "${HUB_TOKEN:-}" && -n "$HUB_URL" ]]; then printf '%s\n' "$HUB_TOKEN" | $PCT exec "$ctid" -- "$SITE" hub "$HUB_URL"; fi
+  up=("$SITE" up "$repo" --branch "$branch" --host "$name.$DOMAIN")
   [[ -n "$subdir" ]] && up+=(--subdir "$subdir")
   [[ -n "$lan" ]] && up+=(--lan)
-  $PCT exec "$ctid" -- "${up[@]}" || die "first deploy failed (pct exec $ctid -- site logs). Fix the repo, then: pct exec $ctid -- site update --force && bash $0 publish $ctid $name"
+  $PCT exec "$ctid" -- "${up[@]}" || die "first deploy failed (pct exec $ctid -- $SITE logs). Fix the repo, then: pct exec $ctid -- $SITE update --force && bash $0 publish $ctid $name"
   publish "$ctid" "$name"
   local i code=""
   for i in $(seq 20); do

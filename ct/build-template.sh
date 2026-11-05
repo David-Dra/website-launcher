@@ -19,7 +19,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get full-upgrade -y -q
 apt-get install -y -q --no-install-recommends ca-certificates curl gnupg git git-lfs rsync jq unattended-upgrades \
-  caddy docker.io docker-compose util-linux procps
+  caddy docker.io docker-cli docker-compose util-linux procps   # Debian 13: the docker command is its own package
 
 # Node.js LTS and cloudflared from their signed apt repos (keys pinned to these repos only)
 install -d -m 755 /etc/apt/keyrings
@@ -41,6 +41,7 @@ install -d -m 700 /etc/site
 
 # The site command, detection and units
 install -m 755 "$HERE/bin/site" /usr/local/sbin/site
+ln -sf /usr/local/sbin/site /usr/sbin/site   # `pct exec <id> -- site …` has no /usr/local/sbin in its PATH
 install -d /usr/local/lib/site
 install -m 644 "$HERE/lib/detect.sh" /usr/local/lib/site/detect.sh
 git -C "$HERE/.." rev-parse --short HEAD 2>/dev/null >/usr/local/lib/site/VERSION || date -u +%F >/usr/local/lib/site/VERSION
