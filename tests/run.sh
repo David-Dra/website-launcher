@@ -177,6 +177,10 @@ ok "conf: quotes around values are stripped" "$(grep -cE '^OUT (DROP -dest 192\.
 out=$(run_pve firewall 104 2>&1); code=$?
 ok "firewall: CT not made by pve-site.sh refused" "$code $([[ -e "$T/fw/104.fw" ]] && echo written || echo untouched)" "1 untouched"
 
+# --- the example conf has no working placeholders: a key you forget must stop the script, not block the wrong LAN ---
+ok "sites.env.example: required keys are empty" \
+  "$(grep -E '^(DOMAIN|TEMPLATE|DNS_IP|LAN|CF_API_TOKEN|CF_ACCOUNT_ID|CF_ZONE_ID)=' "$HERE/../sites.env.example" | grep -cv '=$')" "0"
+
 # --- syntax of everything that only runs in the container ---
 for f in "$HERE/../ct/bin/site" "$HERE/../ct/build-template.sh" "$PVE_SITE"; do
   ok "bash -n $(basename "$f")" "$(bash -n "$f" 2>&1)" ""
