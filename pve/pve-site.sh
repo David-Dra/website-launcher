@@ -68,7 +68,9 @@ need_conf() {
 }
 
 json() {  # json <perl expression on $j> < JSON: prints the result (perl + JSON::PP ship with Proxmox)
-  perl -MJSON::PP -e 'local $/; my $j = decode_json(<STDIN>); my @r = eval $ARGV[0]; die $@ if $@; print map { "$_\n" } grep { defined } @r' "$1"
+  # Empty input: a cf call before it in the pipe died and printed why; fail without adding a perl parse error
+  local in; in=$(cat); [[ -n "$in" ]] || return 1
+  printf '%s' "$in" | perl -MJSON::PP -e 'local $/; my $j = decode_json(<STDIN>); my @r = eval $ARGV[0]; die $@ if $@; print map { "$_\n" } grep { defined } @r' "$1"
 }
 
 need_cf() { [[ -n "$CF_API_TOKEN" && -n "$CF_ACCOUNT_ID" && -n "$CF_ZONE_ID" ]] || die "CF_API_TOKEN, CF_ACCOUNT_ID and CF_ZONE_ID needed ($CONF)"; }

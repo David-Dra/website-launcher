@@ -182,6 +182,11 @@ ok "firewall: CT not made by pve-site.sh refused" "$code $([[ -e "$T/fw/104.fw" 
 ok "sites.env.example: required keys are empty" \
   "$(grep -E '^(DOMAIN|TEMPLATE|DNS_IP|LAN|CF_API_TOKEN|CF_ACCOUNT_ID|CF_ZONE_ID)=' "$HERE/../sites.env.example" | grep -cv '=$')" "0"
 
+# --- a refused Cloudflare call shows Cloudflare's error, and nothing else ---
+out=$(env PATH="$F:$PATH" PVE_SITE_TEST=1 FWDIR="$T/fw" "${CONF_ENV[@]}" CF_API_TOKEN=x CF_ACCOUNT_ID=wrong CF_ZONE_ID=zone \
+  bash "$PVE_SITE" publish 130 recipes 2>&1); code=$?
+ok "cloudflare error: exit 1, one clean message" "$code $(grep -c 'malformed JSON' <<<"$out") $(grep -c 'failed: 1000' <<<"$out")" "1 0 1"
+
 # --- ct/bin/site: single functions, pulled out of the script and run against fakes (the script itself needs root) ---
 SITE_BIN="$HERE/../ct/bin/site"
 fn() { sed -n "/^$1() {/,/^}/p" "$SITE_BIN" | sed "s:/etc/systemd/system:$T/units:g"; }
